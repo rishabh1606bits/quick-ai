@@ -5,7 +5,7 @@ import { checkCredits } from '../middleware/checkcredits.js'
 import { saveCreation, incrementFreeUsage } from '../db/queries.js'
 import multer from 'multer'
 import path from 'path'
-import { removeBackground } from '@imgly/background-removal-node'
+import FormData from 'form-data'
 import fs from 'fs'
 
 
@@ -121,9 +121,25 @@ router.post('/remove-background', protect, checkCredits, upload.single('image'),
     const { userId } = req.auth
     const filePath = req.file.path
 
-    const imageBlob = await removeBackground(filePath)
-    const buffer = Buffer.from(await imageBlob.arrayBuffer())
-    const base64Image = `data:image/png;base64,${buffer.toString('base64')}`
+    const formData = new FormData()
+    formData.append('image_file', fs.createReadStream(filePath))
+    formData.append('size', 'auto')
+
+    const response = await fetch('https://api.remove.bg/v1.0/removebg', {
+      method: 'POST',
+      headers: {
+        'X-Api-Key': process.env.REMOVEBG_API_KEY,
+      },
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.errors?.[0]?.title || 'Remove.bg API error')
+    }
+
+    const arrayBuffer = await response.arrayBuffer()
+    const base64Image = `data:image/png;base64,${Buffer.from(arrayBuffer).toString('base64')}`
 
     fs.unlinkSync(filePath)
 
@@ -136,6 +152,9 @@ router.post('/remove-background', protect, checkCredits, upload.single('image'),
     res.json({ success: true, content: base64Image })
   } catch (error) {
     console.error(error)
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path)
+    }
     res.status(500).json({ success: false, message: error.message })
   }
 })
