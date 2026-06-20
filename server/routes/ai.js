@@ -150,18 +150,19 @@ router.post('/resume-review', protect, checkCredits, upload.single('resume'), as
       return res.status(400).json({ success: false, message: 'Please upload a PDF file' })
     }
 
-    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
-    const dataBuffer = req.file.buffer  
+    const PDFParser = (await import('pdf2json')).default
+    const pdfParser = new PDFParser()
 
-    const pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(dataBuffer) }).promise
-
-    let resumeText = ''
-    for (let i = 1; i <= pdfDoc.numPages; i++) {
-      const page = await pdfDoc.getPage(i)
-      const textContent = await page.getTextContent()
-      const pageText = textContent.items.map((item) => item.str).join(' ')
-      resumeText += pageText + '\n'
-    }
+    const resumeText = await new Promise((resolve, reject) => {
+      pdfParser.on('pdfParser_dataReady', (pdfData) => {
+        const text = pdfData.Pages
+          .map(page => page.Texts.map(t => decodeURIComponent(t.R[0].T)).join(' '))
+          .join('\n')
+        resolve(text)
+      })
+      pdfParser.on('pdfParser_dataError', reject)
+      pdfParser.parseBuffer(req.file.buffer)
+    })
 
     if (!resumeText.trim()) {
       return res.status(400).json({ success: false, message: 'Could not extract text from PDF.' })
