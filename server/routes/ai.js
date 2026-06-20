@@ -4,23 +4,14 @@ import { protect } from '../middleware/verifyclerk.js'
 import { checkCredits } from '../middleware/checkcredits.js'
 import { saveCreation, incrementFreeUsage } from '../db/queries.js'
 import multer from 'multer'
-import path from 'path'
+
 import FormData from 'form-data'
-import fs from 'fs'
+
 
 
 const router = express.Router()
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/')
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname)
-    cb(null, `${Date.now()}${ext}`)
-  },
-})
-
+const storage = multer.memoryStorage()
 const upload = multer({ storage })
 
 const groq = new OpenAI({
@@ -119,17 +110,17 @@ router.post('/generate-image', protect, checkCredits, async (req, res) => {
 router.post('/remove-background', protect, checkCredits, upload.single('image'), async (req, res) => {
   try {
     const { userId } = req.auth
-    const filePath = req.file.path
 
     const formData = new FormData()
-    formData.append('image_file', fs.createReadStream(filePath))
+    formData.append('image_file', req.file.buffer, {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+    })
     formData.append('size', 'auto')
 
     const response = await fetch('https://api.remove.bg/v1.0/removebg', {
       method: 'POST',
-      headers: {
-        'X-Api-Key': process.env.REMOVEBG_API_KEY,
-      },
+      headers: { 'X-Api-Key': process.env.REMOVEBG_API_KEY },
       body: formData,
     })
 
@@ -141,8 +132,6 @@ router.post('/remove-background', protect, checkCredits, upload.single('image'),
     const arrayBuffer = await response.arrayBuffer()
     const base64Image = `data:image/png;base64,${Buffer.from(arrayBuffer).toString('base64')}`
 
-    fs.unlinkSync(filePath)
-
     await saveCreation(userId, 'Background removal', base64Image, 'bg-remove')
 
     if (req.dbUser.plan === 'free') {
@@ -152,9 +141,6 @@ router.post('/remove-background', protect, checkCredits, upload.single('image'),
     res.json({ success: true, content: base64Image })
   } catch (error) {
     console.error(error)
-    if (req.file?.path && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path)
-    }
     res.status(500).json({ success: false, message: error.message })
   }
 })
@@ -162,15 +148,13 @@ router.post('/remove-background', protect, checkCredits, upload.single('image'),
 router.post('/resume-review', protect, checkCredits, upload.single('resume'), async (req, res) => {
   try {
     const { userId } = req.auth
-    const filePath = req.file.path
 
     if (req.file.mimetype !== 'application/pdf') {
-      fs.unlinkSync(filePath)
       return res.status(400).json({ success: false, message: 'Please upload a PDF file' })
     }
 
     const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
-    const dataBuffer = fs.readFileSync(filePath)
+    const dataBuffer = req.file.buffer  
 
     const pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(dataBuffer) }).promise
 
@@ -182,10 +166,8 @@ router.post('/resume-review', protect, checkCredits, upload.single('resume'), as
       resumeText += pageText + '\n'
     }
 
-    fs.unlinkSync(filePath)
-
     if (!resumeText.trim()) {
-      return res.status(400).json({ success: false, message: 'Could not extract text from PDF. Try a different file.' })
+      return res.status(400).json({ success: false, message: 'Could not extract text from PDF.' })
     }
 
     const completion = await groq.chat.completions.create({
@@ -197,7 +179,7 @@ router.post('/resume-review', protect, checkCredits, upload.single('resume'), as
 1. Overall strengths
 2. Weaknesses or gaps
 3. Specific suggestions for improvement
-4. ATS (Applicant Tracking System) compatibility score out of 100 with reasoning
+4. ATS compatibility score out of 100 with reasoning
 
 Resume content:
 ${resumeText.slice(0, 6000)}`,
