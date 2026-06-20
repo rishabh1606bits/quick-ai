@@ -5,7 +5,7 @@ import { checkCredits } from '../middleware/checkcredits.js'
 import { saveCreation, incrementFreeUsage } from '../db/queries.js'
 import multer from 'multer'
 
-import FormData from 'form-data'
+
 
 
 
@@ -111,18 +111,15 @@ router.post('/remove-background', protect, checkCredits, upload.single('image'),
   try {
     const { userId } = req.auth
 
-    const formData = new FormData()
-    formData.append('image_file', req.file.buffer, {
-      filename: req.file.originalname,
-      contentType: req.file.mimetype,
-    })
-    formData.append('size', 'auto')
+   const formData = new FormData()
+formData.append('image_file', new Blob([req.file.buffer], { type: req.file.mimetype }), req.file.originalname)
+formData.append('size', 'auto')
 
-    const response = await fetch('https://api.remove.bg/v1.0/removebg', {
-      method: 'POST',
-      headers: { 'X-Api-Key': process.env.REMOVEBG_API_KEY },
-      body: formData,
-    })
+const response = await fetch('https://api.remove.bg/v1.0/removebg', {
+  method: 'POST',
+  headers: { 'X-Api-Key': process.env.REMOVEBG_API_KEY },
+  body: formData,
+})
 
     if (!response.ok) {
       const error = await response.json()
